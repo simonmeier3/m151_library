@@ -1,4 +1,6 @@
 from django.db import models
+from django.db.models.signals import m2m_changed
+from django.dispatch import receiver
 
 
 class Author(models.Model):
@@ -14,6 +16,14 @@ class Author(models.Model):
 
     def __str__(self):
         return '{} {}'.format(self.first_name, self.last_name)
+
+    def save(self, *args, **kwargs):
+        if not self.image:
+            if self.id:
+                self.image = Author.objects.get(pk=self.id).image
+            else:
+                self.image = 'noimage.png'
+        super().save(*args, **kwargs)
 
 
 class Book(models.Model):
@@ -86,3 +96,32 @@ class Rent(models.Model):
     def __str__(self):
         return '{} to {}, rented by {} {}'.format(self.begin, self.end, self.customer.first_name,
                                                   self.customer.last_name)
+
+    def delete(self, *args, **kwargs):
+        for book in self.books.all():
+            book.is_borrowed = False
+            book.save()
+        super().delete(*args, **kwargs)
+
+
+@receiver(m2m_changed, sender=Rent.books.through)
+def m2m_change_handler_for_rent_books_through(sender, instance, action, **kwargs):
+    """
+    Handler for m2m_change of table api_rent_books.
+    Changes the attribute "is_barrowed" of any book.
+    If book IS NOT part of the rent --> is_barrowed = False.
+    If book IS part of the rent --> is_barrowed = True.
+    """
+    if action == 'pre_remove' or action == 'pre_add':
+        change_borrow_of_book_list(instance.books.all(), False)
+    elif action == 'post_remove' or action == 'post_add':
+        change_borrow_of_book_list(instance.books.all(), True)
+
+
+def change_borrow_of_book_list(book_list: list, is_borrowed: bool):
+    """
+    Function to change attribute "is_barrowed" of books in book-list.
+    """
+    for book in book_list:
+        book.is_borrowed = is_borrowed
+        book.save()
